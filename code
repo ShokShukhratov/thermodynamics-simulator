@@ -1,9 +1,8 @@
 """
 KINETIC — Thermodynamic Particle Simulator
-
+...
 """
 
-  """              
 FEATURES:
 1. Particle Physics-particles colliding off walls and each other
 2. Ideal Gas Law(PV=nRT)-the P,V,T,N readouts in sidebar update real time
