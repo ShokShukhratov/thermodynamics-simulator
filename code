@@ -1,0 +1,653 @@
+"""
+KINETIC — Thermodynamic Particle Simulator
+...
+"""
+
+  """              
+FEATURES:
+1. Particle Physics-particles colliding off walls and each other
+2. Ideal Gas Law(PV=nRT)-the P,V,T,N readouts in sidebar update real time
+3. Speed Color Coding-particles are colored blue(slow),white(medium), or red(fast) based on their speed
+4.Volume Slider-drag slider on right panel to compress/expand container to affect the pressure
+5. Heat/Cool buttons-Click HEAT/COOL or keys H/C to add or remove kinetic energy from particles
+6. Maxwell-Boltzmann Histogram-live speed distribution graph,naturally forms right skewed bell curve
+7. Thermal Equilibrium Indicator-EQUILIBRIUM label appears when particles have stable distribution
+8. Collision Counter-tracks total particle-particle collisions real time
+
+SHORTCUTS:
+Press G-load a showcase state of 40 particles
+Press J=compress box to minimum volume(high pressure demo)
+Press K-heat gas to high speed (high temperature demo)
+Press L-cool gas to near minimum speed (low temperature demo)
+
+"""
+from cmu_graphics import *
+import math
+import random
+#                               Section 1: Model and Classes
+
+class Particle:
+    def __init__(self,x,y,vx,vy,radius,mass,color):
+        self.x=x
+        self.y=y
+        self.vx=vx
+        self.vy=vy
+        self.radius=radius
+        self.mass=mass
+        self.color=color
+
+    def updatePosition(self):
+        self.x+=self.vx
+        self.y+=self.vy
+    
+    def bounceOffWalls(self,container):
+        
+        #Purpose: reflect particles velocity when hits wall and returns total amount of 
+        #momentum transferred which container will use to determine pressure changes
+        
+        momentumTransferred=0
+        
+        #left wall
+        if self.x-self.radius<=container.left:
+            self.x=container.left+self.radius
+            self.vx=abs(self.vx)
+            momentumTransferred+=2*self.mass*abs(self.vx)
+        
+        #right wall
+        elif self.x+self.radius>=container.right:
+            self.x=container.right-self.radius
+            self.vx=-abs(self.vx)
+            momentumTransferred+=2*self.mass*abs(self.vx)
+        
+        #top wall
+        if self.y-self.radius<=container.top:
+            self.y=container.top+self.radius
+            self.vy=abs(self.vy)
+            momentumTransferred+=2*self.mass*abs(self.vy)
+        
+        #bottom wall
+        elif self.y+self.radius>=container.bottom:
+            self.y=container.bottom-self.radius
+            self.vy=-abs(self.vy)
+            momentumTransferred+=2*self.mass*abs(self.vy)
+        
+        return momentumTransferred
+        
+    def getSpeed(self):
+        #magnitude of velocity components
+        return math.sqrt(self.vx**2+self.vy**2)
+        
+    def getKineticEnergy(self):
+        return .5*self.mass*(self.vx**2+self.vy**2)
+
+class Container:
+    #tracks its own size, position, and uses collisions to determine pressure inside of it
+    
+    FIXED_LEFT=40
+    FIXED_TOP=5
+    FIXED_BOTTOM=200
+    
+    def __init__(self,width):
+        self.left=Container.FIXED_LEFT
+        self.top=Container.FIXED_TOP
+        self.bottom=Container.FIXED_BOTTOM
+        self.right=self.left+width
+        
+        #Accumulated momentum from collisions since last pressure reset
+        self.accumulatedImpulse=0
+        #amount of steps from last pressure calculation
+        self.stepsSinceReset=0
+        # pressure value shown to user
+        self.pressure=0
+        
+        #amount of steps between each pressure calculation
+        self.PRESSURE_INTERVAL=30
+    
+    @property
+    def width(self):
+        return self.right-self.left
+    
+    @property
+    def height(self):
+        return self.bottom-self.top
+    
+    @property
+    def volume(self):
+        #In 2d depth is a constant
+        return self.width*self.height
+    
+    def addImpulse(self,impulse):
+        #will be called by each particle when it bounces of wall
+        self.accumulatedImpulse+=impulse
+    
+    #this function was from ClaudeCode
+    def updatePressure(self):
+        #compute average pressure after every PRESSURE-INTERVAL steps which will be total impulse
+        #per time divided by volume to get per unit area units
+        
+        self.stepsSinceReset+=1
+        if self.stepsSinceReset>self.PRESSURE_INTERVAL:
+            rawPressure=self.accumulatedImpulse/self.PRESSURE_INTERVAL
+            #make result easy to see and more stable to actual change
+            self.pressure=.7*self.pressure+.3*rawPressure
+            self.accumulatedImpulse=0
+            self.stepsSinceReset=0
+    
+    def setWidth(self,newWidth):
+        MIN_WIDTH=60
+        MAX_WIDTH=270
+        newWidth=max(MIN_WIDTH,min(MAX_WIDTH,newWidth))
+        self.right=self.left+newWidth
+    
+    def containsPoint(self,x,y):
+        return self.left<=x<=self.right and self.top<=y<=self.bottom
+
+#                               Section 2-Physics Helper Functions
+def distance(p1,p2):
+    dx=p2.x-p1.x
+    dy=p2.y-p1.y
+    return math.sqrt(dx**2+dy**2)
+
+def regulateElasticCollisions(p1,p2):
+    #computes new velocities after each collision
+    #Algorithm: Find normal vector from their centers, project current velocities onto the normal
+    
+    #conserves both kinetic energy and momentum
+    
+    dx=p2.x-p1.x
+    dy=p2.y-p1.y
+    dist=math.sqrt(dx**2+dy**2)
+    
+    if dist==0:
+        return 
+    
+    #unit normal vector
+    normalX=dx/dist
+    normalY=dy/dist
+    
+    #relative velocity of p1 to p2
+    relativeVX=p1.vx-p2.vx
+    relativeVY=p1.vy-p2.vy
+    
+    #how much of the relative velcity is along the normal
+    relativeSpeedAlongNormal=relativeVX*normalX+relativeVY*normalY
+    
+    if relativeSpeedAlongNormal>0:
+        return False #particles are moving away from eah other, so no collision
+    
+    #impulse factor for elastic collisions
+    impulseScalar=(2*relativeSpeedAlongNormal)/(p1.mass+p2.mass)
+    
+    #update velocity using impulse calculation
+    p1.vx-=impulseScalar*p2.mass*normalX
+    p1.vy-=impulseScalar*p2.mass*normalY
+    p2.vx+=impulseScalar*p1.mass*normalX
+    p2.vy+=impulseScalar*p1.mass*normalY
+
+    #ensure no particles are going through each other
+    overlap=(p1.radius+p2.radius)-dist
+    if overlap>0:
+        correction=overlap/2
+        p1.x-=correction*normalX
+        p1.y-=correction*normalY
+        p2.x+=correction*normalX
+        p2.y+=correction*normalY
+        
+    return True
+    
+def checkParticleCollisions(particles,app):
+    #check every unique particles of particles for overlap and handle the collisions
+    n=len(particles)
+    for i in range(n):
+        for j in range(i+1,n):
+            p1=particles[i]
+            p2=particles[j]
+            if distance(p1,p2)<p1.radius+p2.radius:
+                collided=regulateElasticCollisions(p1,p2)
+                if collided:
+                    app.collisionCount+=1
+
+def computeAverageKineticEnergies(particles):
+    if len(particles)==0:
+        return 0
+    totalKE=sum(p.getKineticEnergy() for p in particles)
+    return totalKE/len(particles)
+
+def computeTemperature(particles):
+    avgKE=computeAverageKineticEnergies(particles)
+    #this part is from Claude
+    ##scale factor chosen so starting speed around 2 gives temp to 200
+    return avgKE*50
+
+def getSpeedColor(speed,minSpeed,maxSpeed):
+    #slow=blue
+    #medium=white
+    #fast=red
+    
+    if maxSpeed==minSpeed:
+        return 'white'
+    
+    #keep speed from a scale of 0 to 1 for convenience in changing colors
+    #these calculations are from claude
+    t=(speed-minSpeed)/(maxSpeed-minSpeed)
+    t=max(0,min(1,t))
+    
+    #color changes based on speed
+    if t<.35:
+        return 'dodgerBlue'
+    elif t>.65:
+        return 'red'
+    else:
+        return 'white'
+
+def heatParticles(particles,energyBoost):
+    #add KE to every particle by increasing velocities
+    #increasing speed by factor>1 will be same as increase in temperature
+    
+    for p in particles:
+        p.vx*=energyBoost
+        p.vy*=energyBoost
+
+def coolParticles(particles,energyReduction):
+    #remove KE from particles by decreasing speeds (energy reduction gotta be between 0 and 1)
+    for p in particles:
+        p.vx*=energyReduction
+        p.vy*=energyReduction
+
+def keepParticlesInsideContainer(particles,container):
+    #the resizing of container shouldn't allow particles to be outside of it
+    for p in particles:
+        margin=p.radius
+        p.x=max(container.left+margin,min(container.right-margin,p.x))
+        p.y=max(container.top+margin,min(container.bottom-margin,p.y))
+
+def makeParticle(container):
+    radius=5
+    margin=radius+2
+    
+    #generate random position inside the walls
+    x=random.uniform(container.left+margin,container.right-margin)
+    y=random.uniform(container.top+margin,container.bottom-margin)
+    
+    #angle calculation gotten from claude
+    angle=random.uniform(0,2*math.pi)
+    speed=random.uniform(1.5,3)
+    vx=speed*math.cos(angle)
+    vy=speed*math.sin(angle)
+    
+    return Particle(x,y,vx,vy,radius,mass=1,color='white')
+
+def computeSpeedStdDev(particles):
+    # a low standard deviation will mean most particles have similar speed and thermal equilibrium is reaches
+    #measures how spread out the speeds are
+    if len(particles)<2:
+        return 0
+    
+    speeds=[p.getSpeed() for p in particles]
+    avgSpeed=sum(speeds)/len(particles)
+    variance=sum((s-avgSpeed)**2 for s in speeds)/len(speeds)
+    return math.sqrt(variance)
+
+#                           Section 3-Initialization(app start stuff)
+def onAppStart(app):
+    #container
+    app.container=Container(width=200)
+    app.collisionCount=0
+    
+    #particles
+    app.INITIAL_PARTICLE_COUNT=2
+    app.particles=[]
+    for _ in range(app.INITIAL_PARTICLE_COUNT):
+        app.particles.append(makeParticle(app.container))
+    
+    #simulation state
+    app.paused=False
+    app.stepsPerFrame=2
+    
+    #UI volume slider 
+    app.sliderX=305
+    app.sliderTrackTop=20
+    app.sliderTrackBottom=160
+    app.sliderHandleY=100 #starting handle position
+    app.draggingSlider=False
+    
+    #UI Heat/Cool buttons, positioned under slider
+    app.heatButtonX=315
+    app.heatButtonY=200
+    app.heatButtonW=50
+    app.heatButtonH=30
+    
+    app.coolButtonX=315
+    app.coolButtonY=245
+    app.coolButtonW=50
+    app.coolButtonH=30
+    
+    #highlight button when pressed
+    app.heatFlash=0
+    app.coolFlash=0
+    
+    #speed histogram data
+    app.histogramBins=10
+    app.histogramData=[0]*app.histogramBins
+    app.MAX_HISTOGRAM_SPEED=10#speeds above this go into last bin
+    
+    app.stepCount=0
+    app.showInstructions=True
+
+#                                           Section 4-drawing functions
+
+def redrawAll(app):
+    #dark background 
+    drawRect(0,0,400,400,fill='black')
+    
+    drawSimulation(app)
+    drawUIPanel(app)
+    drawHistogram(app)
+    drawPauseOverlay(app)
+     
+    if app.showInstructions:
+        drawFullscreenInstructions(app)
+
+def drawFullscreenInstructions(app):
+    drawRect(0,0,400,400,fill='black',opacity=92)
+    drawLabel('THERMODYNAMICS SIMULATOR',200,45,size=20,fill='cyan',bold=True,font='monospace')
+    
+    lines=['Drag the slider to resize box','Click HEAT/COOL to change temp','Press A to add particles','Press D to remove particles',
+            'Press SPACE to pause | R to reset ']
+    #this part was by claude code
+    for i, line in enumerate(lines):
+        drawLabel(line,200,90+i*35,size=15,fill='white',font='monospace',bold=True)
+    drawLabel('Click anywhere to begin',200,300,size=20,fill='cyan',bold=True,font='monospace')
+
+def drawSimulation(app):
+    container=app.container
+    
+    drawRect(container.left,container.top,container.width,container.height,fill=rgb(10,10,20),border='cyan',borderWidth=2)
+    
+    #particles, computing speed range for color coding
+    if len(app.particles)==0:
+        return
+    speeds=[p.getSpeed() for p in app.particles]
+    minSpeed=min(speeds)
+    maxSpeed=max(speeds)
+    
+    for p in app.particles:
+        color=getSpeedColor(p.getSpeed(),minSpeed,maxSpeed)
+        drawCircle(p.x,p.y,p.radius,fill=color,opacity=90)
+    
+def drawUIPanel(app):
+    # volume slider-- heat and cool buttons--P,V,T,N readouts
+    
+    #panel background
+    drawRect(280,0,120,400,fill=rgb(20,20,30),border='gray',borderWidth=1)
+    
+    #P,V,T.N labels
+    temp=computeTemperature(app.particles)
+    pressure=app.container.pressure
+    volume=app.container.volume//100
+    n=len(app.particles)
+    CN=app.collisionCount
+    
+    drawLabel('GAS PROPERTIES',354,30,size=10,fill='cyan',font='monospace',bold=True)
+    drawLabel(f'P={pressure:.1f}(N/m)',362,45,size=10,fill='white',font='monospace',bold=True)
+    drawLabel(f'V={volume}(L)',362,65,size=10,fill='white',font='monospace',bold=True)
+    drawLabel(f'T={temp:.0f}(K)',362,85,size=10,fill='white',font='monospace',bold=True)
+    drawLabel(f'N={n}(mol)',362,105,size=10,fill='white',font='monospace',bold=True)
+    drawLabel(f'Collisions:{CN}',358,125,size=10,fill='white',font='monospace',bold=True)
+    
+    #slider
+    drawVolumeSlider(app)
+    
+    #heat/cool buttons
+    drawHeatCoolButtons(app)
+    
+    #keyboard shortcut legend
+    drawKeyLegend(app)
+    
+def drawVolumeSlider(app):
+    #track line
+    drawLine(app.sliderX,app.sliderTrackTop,app.sliderX,app.sliderTrackBottom,fill='gray',lineWidth=3)
+    
+    #labels at top and bottom of slider
+    drawLabel('+ Vol',app.sliderX,app.sliderTrackTop-8,size=9,fill='white',bold=True,font='monospace')
+    drawLabel('- Vol',app.sliderX,app.sliderTrackBottom+11,size=9,fill='white',bold=True,font='monospace')
+    
+    #slider handle-glows cyan when being dragged
+    handleColor='cyan' if app.draggingSlider else 'white'
+    drawCircle(app.sliderX,app.sliderHandleY,10,fill=handleColor,border='cyan',borderWidth=1)
+    
+def drawHeatCoolButtons(app):
+    
+    #heat button-flashes red when activated
+    heatFill='red' if app.heatFlash>0 else rgb(60,20,20)
+    drawRect(app.heatButtonX,app.heatButtonY,app.heatButtonW,app.heatButtonH,fill=heatFill,border='red',borderWidth=1)
+    drawLabel('HEAT +',app.heatButtonX+app.heatButtonW//2,app.heatButtonY+app.heatButtonH//2,size=9,fill='white',bold=True,font='monospace')
+    
+    #cool button-flashes blue when activated
+    coolFill='dodgerBlue' if app.coolFlash>0 else rgb(10,20,60)
+    drawRect(app.coolButtonX,app.coolButtonY,app.coolButtonW,app.coolButtonH,fill=coolFill,border='dodgerBlue',borderWidth=1)
+    drawLabel('COOL -',app.coolButtonX+app.coolButtonW//2,app.coolButtonY+app.coolButtonH//2,size=9,fill='white',bold=True,font='monospace')
+
+    
+def drawKeyLegend(app):
+    legend=['Space: pause','R: reset','A: + particle','D: - particle','H: heat', 'C: cool']
+    startY=302
+    drawLabel('KEYS',340,startY-12,size=10,fill='white',font='monospace',bold=True)
+     #this part was by Claude
+    for i,text in enumerate(legend):
+        drawLabel(text,340,startY+i*14,size=9,fill='white',font='monospace',bold=True)
+
+def drawHistogram(app):
+    #a live speed histogram in which bars will estimate a Maxwell-Boltzmann distribution(bell shaped curve skewed to right)
+    
+    #layout
+    histTop=225
+    histBottom=350
+    histLeft=14
+    histRight=266
+    histHeight=histBottom-histTop
+    histWidth=histRight-histLeft
+    
+    #background
+    drawRect(histLeft,histTop,histWidth,histHeight+5,fill=rgb(10,10,20),border='gray',borderWidth=1)
+    drawLabel('SPEED DISTRIBUTION (Maxwell-Boltzmann)',histLeft+histWidth//2,histTop+8,size=10,fill='cyan',font='monospace',bold=True)
+    
+    #bars
+    bins=app.histogramData
+    maxBinCount=max(bins) if max(bins)>0 else 1
+    
+    binCount=len(bins)
+    barAreaLeft=histLeft+5
+    barAreaWidth=histWidth-10
+    barW=barAreaWidth/binCount
+    barMaxH=histHeight-25 #leaving room for title
+    
+    #this loop statement was from claude
+    for i,count in enumerate(bins):
+        barH=int((count/maxBinCount)*barMaxH)
+        barX=barAreaLeft+i*barW
+        barY=histBottom-barH
+        
+        #color bars by speed(from claude)
+        t=i/(binCount-1) if binCount>1 else 0
+        r=int(t*255)
+        b=int((1-t)*255)
+        barColor=rgb(r,80,b)
+        
+        if barH>0:
+            drawRect(barX+1,barY,barW-2,barH,fill=barColor,opacity=85)
+        
+    #axis label
+    drawLabel('SLOW',barAreaLeft+10,histBottom+15,size=10,fill='dodgerBlue',bold=True)
+    drawLabel('FAST',barAreaLeft+barAreaWidth-20,histBottom+15,size=10,fill='red',bold=True)
+    drawLabel('X: Speed | Y: No. of Particles',histLeft+histWidth//2,histTop-10,size=10,fill='white',font='monospace',bold=True)
+    
+    #equilibrium indicator
+    stdDev=computeSpeedStdDev(app.particles)
+    #threshold tuned so it only triggers when it is settled
+    #threshold given by Claude
+    if stdDev<1.2 and len(app.particles)>=5:
+        drawRect(histLeft+80,histTop+140,80,14,fill=rgb(0,40,0),border='lime',borderWidth=1)
+        drawLabel('EQUILIBRIUM',histLeft+histWidth//2-6,histBottom+22,size=8,fill='lime',bold=True,font='monospace')
+        
+def drawPauseOverlay(app):
+    #when simulation is paused, draw a paused message
+    if app.paused:
+        drawRect(0,0,400,400,fill='black',opacity=50)
+        drawLabel('PAUSED',app.width//2-10,app.height//2,size=30,fill='white', bold=True,font='monospace',opacity=80)
+        drawLabel('Press SPACE to resume',190,225,size=12,fill='white',font='monospace',bold=True)
+    
+    
+#                                       Section 5 -Controllers
+def onStep(app):
+    if app.paused:
+        return
+    
+    for _ in range(app.stepsPerFrame):
+        physicsStep(app)
+    
+    updateHistogram(app)
+    
+    if app.heatFlash>1:
+        app.heatFlash-=1
+    
+    if app.coolFlash>1:
+        app.coolFlash-=1
+        
+    app.stepCount+=1
+    
+def physicsStep(app):
+    # move the particles, cause collisions and collect impulse, pressure gets updated
+    for p in app.particles:
+        p.updatePosition()
+        impulse=p.bounceOffWalls(app.container)
+        app.container.addImpulse(impulse)
+    
+    checkParticleCollisions(app.particles,app)
+    app.container.updatePressure()
+
+def capParticleSpeed(particles,maxSpeed=12):
+    for p in particles:
+        speed=p.getSpeed()
+        if speed>maxSpeed:
+            p.vx=p.vx/speed*maxSpeed
+            p.vy=p.vy/speed*maxSpeed
+
+def floorParticleSpeed(particles,minSpeed=.5):
+    for p in particles:
+        speed=p.getSpeed()
+        if speed<minSpeed:
+            p.vx=p.vx/speed*minSpeed
+            p.vy=p.vy/speed*minSpeed
+            
+            
+
+def updateHistogram(app):
+    #each bin counts how many particles fall in a speed range
+    bins=[0]*app.histogramBins
+    for p in app.particles:
+        speed=p.getSpeed()
+        #map speed to bin index(this was by claude)
+        binIndex=int(speed/app.MAX_HISTOGRAM_SPEED *app.histogramBins)
+        binIndex=min(binIndex,app.histogramBins-1)
+        bins[binIndex]+=1
+    app.histogramData=bins
+    
+def onMousePress(app,mouseX,mouseY):
+    app.showInstructions=False
+    
+    #checking slider info
+    handleRadius=10
+    if (abs(mouseX-app.sliderX)<=handleRadius and abs(mouseY-app.sliderHandleY)<=handleRadius):
+        app.draggingSlider=True
+    
+    #checking heat button
+    if pointInRect(mouseX,mouseY,app.heatButtonX,app.heatButtonY,app.heatButtonW,app.heatButtonH):
+        heatParticles(app.particles,energyBoost=1.15)
+        app.heatFlash=1
+    
+    #checking cool button
+    if pointInRect(mouseX,mouseY,app.coolButtonX,app.coolButtonY,app.coolButtonW,app.coolButtonH):
+        coolParticles(app.particles,energyReduction=.85)
+        app.coolFlash=1
+
+    
+def onMouseDrag(app,mouseX,mouseY):
+    #this condition was by claude
+    if app.draggingSlider:
+        newHandleY=max(app.sliderTrackTop,min(app.sliderTrackBottom,mouseY))
+        app.sliderHandleY=newHandleY
+        
+        #slider UP=more volume, slider Down=less volume
+        t=(newHandleY-app.sliderTrackTop)/(app.sliderTrackBottom-app.sliderTrackTop)
+        newWidth=270-int(t*210)
+        app.container.setWidth(newWidth)
+        
+        #checking to see if particle is outside border(this was by me)
+        keepParticlesInsideContainer(app.particles,app.container)
+
+def onMouseRelease(app,mouseX,mouseY):
+    app.draggingSlider=False
+    app.heatFlash=0
+    app.coolFlash=0
+
+def onKeyPress(app,key):
+    #keyboard shortcuts:
+    #space-pause/resume, r-reset,a-add 5 particles,d-remove 5 particles,h-heat,c-cool
+    
+    if key=='space':
+        app.paused=not app.paused
+    
+    elif key=='r' or key=='R':
+        onAppStart(app)
+    
+    elif key=='a' or key=='A':
+        for _ in range(5):
+            if len(app.particles)<80:
+                app.particles.append(makeParticle(app.container))
+    
+    elif key=='d' or key =='D':
+        for _ in range(5):
+            if len(app.particles)>2:
+                app.particles.pop()
+    
+    elif key=='h' or key=='H':
+        heatParticles(app.particles,energyBoost=1.15)
+        app.heatFlash=1
+
+    elif key=='c' or key=='C':
+        coolParticles(app.particles,energyReduction=.85)
+        app.coolFlash=1
+    
+    elif key=='g' or key=='G':
+        for _ in range(38):
+            app.particles.append(makeParticle(app.container))
+    
+    elif key=='j' or key=='J':
+        #compress to minimum value
+        app.container.setWidth(60)
+        app.sliderHandleY=app.sliderTrackBottom
+        keepParticlesInsideContainer(app.particles,app.container)
+    
+    elif key=='k' or key=="K":
+        #heat dramatically
+        for _ in range(4):
+            heatParticles(app.particles,energyBoost=1.3)
+    
+    elif key=='l' or key=='L':
+        #cool dramatically
+        for _ in range(4):
+            coolParticles(app.particles,energyReduction=.9)
+        
+def onKeyRelease(app,key):
+    if key=='h':
+        app.heatFlash=0
+    elif key=='c':
+        app.coolFlash=0
+
+def pointInRect(px,py,rx,ry,rw,rh):
+    return rx<=px<=rx+rw and ry<=py<=ry+rh
+
+def main():
+    runApp()
+main()
