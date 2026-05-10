@@ -88,33 +88,35 @@ purely as an emergent property of elastic collisions.
 ---
 
 ## Project Structure
+```
 gas_simulator.py
-Section 1 — Model & Classes
+│
+├── Section 1 — Model & Classes
 │     ├── Particle class (position, velocity, collision, color)
 │     └── Container class (walls, pressure calculation, resizing)
-
-Section 2 — Physics Helper Functions
+│
+├── Section 2 — Physics Helper Functions
 │     ├── distance()
 │     ├── regulateElasticCollisions()
 │     ├── computeTemperature()
 │     ├── getSpeedColor()
 │     ├── capParticleSpeed / floorParticleSpeed()
 │     └── makeParticle()
-
-── Section 3 — Initialization (onAppStart)
-
-── Section 4 — Views (redrawAll and helpers)
+│
+├── Section 3 — Initialization
+│     └── onAppStart()
+│
+├── Section 4 — Views
 │     ├── drawSimulation()
 │     ├── drawUIPanel()
 │     ├── drawHistogram()
 │     └── drawPauseOverlay()
-
-Section 5 — Controllers (event handlers)
-├── onStep / physicsStep()
-├── onMousePress / Drag / Release()
-└── onKeyPress / Release()
-
----
+│
+└── Section 5 — Controllers
+      ├── onStep / physicsStep()
+      ├── onMousePress / Drag / Release()
+      └── onKeyPress / Release()
+```
 
 ## Built With
 
